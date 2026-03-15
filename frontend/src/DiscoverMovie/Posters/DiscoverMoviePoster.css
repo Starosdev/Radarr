@@ -44,7 +44,7 @@ $hoverScale: 1.05;
   height: 100%;
   color: var(--offWhite);
   text-align: center;
-  font-size: 20px;
+  font-size: $smallFontSize;
 }
 
 .title {
