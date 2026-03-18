@@ -19,6 +19,8 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
         [TestCase("Betty White\u00b4s Off Their Rockers", "Betty+Whites+Off+Their+Rockers")]
         [TestCase("Betty White‘s Off Their Rockers", "Betty+Whites+Off+Their+Rockers")]
         [TestCase("Betty White’s Off Their Rockers", "Betty+Whites+Off+Their+Rockers")]
+        [TestCase("Movie \"With Quotes\" Title", "Movie+With+Quotes+Title")]
+        [TestCase("Movie \u201CWith Quotes\u201D Title", "Movie+With+Quotes+Title")]
         public void should_replace_some_special_characters(string input, string expected)
         {
             Subject.SceneTitles = new List<string> { input };
