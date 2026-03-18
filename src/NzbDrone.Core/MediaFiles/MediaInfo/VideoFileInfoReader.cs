@@ -85,7 +85,7 @@ namespace NzbDrone.Core.MediaFiles.MediaInfo
                 mediaInfoModel.VideoBitDepth = GetPixelFormat(primaryVideoStream?.PixelFormat)?.Components.Min(x => x.BitDepth) ?? 8;
                 mediaInfoModel.VideoColourPrimaries = primaryVideoStream?.ColorPrimaries;
                 mediaInfoModel.VideoTransferCharacteristics = primaryVideoStream?.ColorTransfer;
-                mediaInfoModel.DoviConfigurationRecord = primaryVideoStream?.SideDataList?.Find(x => x.GetType().Name == nameof(DoviConfigurationRecordSideData)) as DoviConfigurationRecordSideData;
+                mediaInfoModel.DoviConfigurationRecord = GetDoviConfigurationRecord(analysis, primaryVideoStream);
                 mediaInfoModel.Height = primaryVideoStream?.Height ?? 0;
                 mediaInfoModel.Width = primaryVideoStream?.Width ?? 0;
                 mediaInfoModel.AudioFormat = analysis.PrimaryAudioStream?.CodecName;
@@ -127,6 +127,16 @@ namespace NzbDrone.Core.MediaFiles.MediaInfo
                 var framesSideData = frames?.Frames?.Count > 0 ? frames?.Frames[0]?.SideDataList ?? new () : new ();
 
                 var sideData = streamSideData.Concat(framesSideData).ToList();
+
+                // If no Dolby Vision side data found on primary stream, check all other video streams
+                if (!sideData.Any(x => x.GetType().Name == nameof(DoviConfigurationRecordSideData)))
+                {
+                    var dvSideData = GetDoviSideDataFromAllStreams(analysis, primaryVideoStream);
+                    if (dvSideData.Count > 0)
+                    {
+                        sideData = sideData.Concat(dvSideData).ToList();
+                    }
+                }
                 mediaInfoModel.VideoHdrFormat = GetHdrFormat(mediaInfoModel.VideoBitDepth, mediaInfoModel.VideoColourPrimaries, mediaInfoModel.VideoTransferCharacteristics, sideData);
 
                 return mediaInfoModel;
@@ -187,6 +197,57 @@ namespace NzbDrone.Core.MediaFiles.MediaInfo
             var codecFilter = new[] { "mjpeg", "png" };
 
             return mediaAnalysis.VideoStreams.FirstOrDefault(s => !codecFilter.Contains(s.CodecName)) ?? mediaAnalysis.PrimaryVideoStream;
+        }
+
+        private static DoviConfigurationRecordSideData GetDoviConfigurationRecord(IMediaAnalysis analysis, VideoStream primaryVideoStream)
+        {
+            // Check primary video stream first
+            var dovi = primaryVideoStream?.SideDataList?.Find(x => x.GetType().Name == nameof(DoviConfigurationRecordSideData)) as DoviConfigurationRecordSideData;
+
+            if (dovi != null)
+            {
+                return dovi;
+            }
+
+            // Check all other video streams for DV metadata (some releases have DV as a secondary stream)
+            foreach (var stream in analysis.VideoStreams)
+            {
+                if (stream == primaryVideoStream)
+                {
+                    continue;
+                }
+
+                dovi = stream.SideDataList?.Find(x => x.GetType().Name == nameof(DoviConfigurationRecordSideData)) as DoviConfigurationRecordSideData;
+
+                if (dovi != null)
+                {
+                    return dovi;
+                }
+            }
+
+            return null;
+        }
+
+        private static List<SideData> GetDoviSideDataFromAllStreams(IMediaAnalysis analysis, VideoStream primaryVideoStream)
+        {
+            var result = new List<SideData>();
+
+            foreach (var stream in analysis.VideoStreams)
+            {
+                if (stream == primaryVideoStream)
+                {
+                    continue;
+                }
+
+                var dvSideData = stream.SideDataList?.Where(x => x.GetType().Name == nameof(DoviConfigurationRecordSideData)).ToList();
+
+                if (dvSideData?.Count > 0)
+                {
+                    result.AddRange(dvSideData);
+                }
+            }
+
+            return result;
         }
 
         private FFProbePixelFormat GetPixelFormat(string format)

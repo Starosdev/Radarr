@@ -76,7 +76,7 @@ namespace NzbDrone.Core.Test.MediaFiles
         }
 
         [Test]
-        public void should_delete_existing_file_fromdb_if_file_doesnt_exist()
+        public void should_delete_existing_file_fromdb_with_missing_reason_if_file_doesnt_exist()
         {
             GivenSingleMovieWithSingleMovieFile();
 
@@ -86,7 +86,7 @@ namespace NzbDrone.Core.Test.MediaFiles
 
             Subject.UpgradeMovieFile(_movieFile, _localMovie);
 
-            Mocker.GetMock<IMediaFileService>().Verify(v => v.Delete(_localMovie.Movie.MovieFile, DeleteMediaFileReason.Upgrade), Times.Once());
+            Mocker.GetMock<IMediaFileService>().Verify(v => v.Delete(_localMovie.Movie.MovieFile, DeleteMediaFileReason.MissingFromDisk), Times.Once());
         }
 
         [Test]
@@ -109,6 +109,18 @@ namespace NzbDrone.Core.Test.MediaFiles
             GivenSingleMovieWithSingleMovieFile();
 
             Subject.UpgradeMovieFile(_movieFile, _localMovie).OldFiles.Count.Should().Be(1);
+        }
+
+        [Test]
+        public void should_not_return_old_movie_file_in_oldFiles_if_file_doesnt_exist()
+        {
+            GivenSingleMovieWithSingleMovieFile();
+
+            Mocker.GetMock<IDiskProvider>()
+                .Setup(c => c.FileExists(It.IsAny<string>()))
+                .Returns(false);
+
+            Subject.UpgradeMovieFile(_movieFile, _localMovie).OldFiles.Should().BeEmpty();
         }
 
         [Test]
