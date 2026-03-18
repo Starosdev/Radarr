@@ -218,6 +218,12 @@ namespace NzbDrone.Core.History
                 return;
             }
 
+            if (message.Reason == DeleteMediaFileReason.MissingFromDisk)
+            {
+                _logger.Debug("Movie file already missing from disk, not creating history event.");
+                return;
+            }
+
             var history = new MovieHistory
             {
                 EventType = MovieHistoryEventType.MovieFileDeleted,
