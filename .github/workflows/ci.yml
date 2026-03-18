@@ -1,0 +1,972 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - develop
+      - master
+    paths-ignore:
+      - '.github/**'
+      - 'src/Radarr.Api.*/openapi.json'
+  pull_request:
+    branches:
+      - develop
+    paths-ignore:
+      - '.github/**'
+      - 'src/NzbDrone.Core/Localization/Core/**'
+      - 'src/Radarr.Api.*/openapi.json'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  MAJOR_VERSION: '6.1.1'
+  DOTNET_VERSION: '8.0.405'
+  NODE_VERSION: '20.11.1'
+  INNO_VERSION: '6.2.2'
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Setup: generate build number, detect backend changes
+  # ---------------------------------------------------------------------------
+  setup:
+    runs-on: ubuntu-24.04
+    outputs:
+      build_number: ${{ steps.counter.outputs.build_number }}
+      radarr_version: ${{ steps.counter.outputs.radarr_version }}
+      branch_name: ${{ steps.counter.outputs.branch_name }}
+      backend_changed: ${{ steps.changes.outputs.backend_changed }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate build number
+        id: counter
+        env:
+          MAJOR_VERSION: ${{ env.MAJOR_VERSION }}
+        run: |
+          git fetch --tags --force
+          LAST=$(git tag -l 'build-counter-*' | sed 's/build-counter-//' | sort -n | tail -1)
+          NEXT=$(( ${LAST:-2999} + 1 ))
+          echo "build_number=$NEXT" >> "$GITHUB_OUTPUT"
+          echo "radarr_version=${MAJOR_VERSION}.${NEXT}" >> "$GITHUB_OUTPUT"
+
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "branch_name=${{ github.head_ref }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "branch_name=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Push build counter tag
+        if: github.event_name != 'pull_request'
+        env:
+          BUILD_NUMBER: ${{ steps.counter.outputs.build_number }}
+        run: |
+          for attempt in 1 2 3; do
+            if git tag "build-counter-${BUILD_NUMBER}" && git push origin "build-counter-${BUILD_NUMBER}"; then
+              echo "Tag pushed successfully on attempt $attempt"
+              break
+            fi
+            echo "Tag push failed on attempt $attempt, retrying..."
+            git fetch --tags --force
+            LAST=$(git tag -l 'build-counter-*' | sed 's/build-counter-//' | sort -n | tail -1)
+            BUILD_NUMBER=$(( LAST + 1 ))
+            echo "build_number=$BUILD_NUMBER" >> "$GITHUB_OUTPUT"
+            echo "radarr_version=${MAJOR_VERSION}.${BUILD_NUMBER}" >> "$GITHUB_OUTPUT"
+          done
+
+      - name: Detect backend changes
+        id: changes
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git diff origin/develop...HEAD --name-only | grep -qE "^(src/|azure-pipelines.yml)" \
+              && echo "backend_changed=true" >> "$GITHUB_OUTPUT" \
+              || echo "backend_changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "backend_changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ---------------------------------------------------------------------------
+  # Build Backend: cross-compile all RIDs from a single Linux runner
+  # ---------------------------------------------------------------------------
+  build-backend:
+    runs-on: ubuntu-24.04
+    needs: setup
+    env:
+      RADARRVERSION: ${{ needs.setup.outputs.radarr_version }}
+      BUILD_SOURCEBRANCHNAME: ${{ needs.setup.outputs.branch_name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 1
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: Enable FreeBSD platform in SDK
+        run: |
+          BUNDLED="${DOTNET_ROOT}/sdk/${DOTNET_VERSION}/Microsoft.NETCoreSdk.BundledVersions.props"
+          echo "Patching: $BUNDLED"
+          if grep -q freebsd-x64 "$BUNDLED"; then
+            echo "Extra platforms already enabled"
+          else
+            sed -i.ORI 's/osx-x64/osx-x64;freebsd-x64/' "$BUNDLED"
+          fi
+
+      - name: Build backend
+        run: ./build.sh --backend --enable-extra-platforms
+
+      - name: Clean intermediate output
+        run: |
+          find _output -type f ! -path "*/publish/*" -exec rm -rf {} \;
+          find _output -depth -empty -type d -exec rm -r "{}" \;
+          find _tests -type f ! -path "*/publish/*" -exec rm -rf {} \;
+          find _tests -depth -empty -type d -exec rm -r "{}" \;
+
+      - name: Upload backend output
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-output
+          path: _output/
+          compression-level: 1
+
+      - name: Upload win-x64 tests
+        uses: actions/upload-artifact@v4
+        with:
+          name: win-x64-tests
+          path: _tests/net8.0/win-x64/publish/
+
+      - name: Upload linux-x64 tests
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-x64-tests
+          path: _tests/net8.0/linux-x64/publish/
+
+      - name: Upload linux-musl-x64 tests
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-musl-x64-tests
+          path: _tests/net8.0/linux-musl-x64/publish/
+
+      - name: Upload osx-x64 tests
+        uses: actions/upload-artifact@v4
+        with:
+          name: osx-x64-tests
+          path: _tests/net8.0/osx-x64/publish/
+
+  # ---------------------------------------------------------------------------
+  # Build Frontend
+  # ---------------------------------------------------------------------------
+  build-frontend:
+    runs-on: ubuntu-24.04
+    needs: setup
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Cache Yarn packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/yarn
+          key: yarn-${{ runner.os }}-${{ hashFiles('yarn.lock') }}
+          restore-keys: yarn-${{ runner.os }}-
+
+      - name: Build frontend
+        run: ./build.sh --frontend
+        env:
+          FORCE_COLOR: '0'
+          YARN_CACHE_FOLDER: ~/.cache/yarn
+
+      - name: Upload frontend output
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-output
+          path: _output/UI/
+
+  # ---------------------------------------------------------------------------
+  # Packages: create archives for all platforms
+  # ---------------------------------------------------------------------------
+  packages:
+    runs-on: ubuntu-24.04
+    needs: [build-backend, build-frontend, setup]
+    env:
+      RADARRVERSION: ${{ needs.setup.outputs.radarr_version }}
+      BUILD_SOURCEBRANCHNAME: ${{ needs.setup.outputs.branch_name }}
+      BUILDNAME: ${{ needs.setup.outputs.branch_name }}.${{ needs.setup.outputs.radarr_version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Download backend output
+        uses: actions/download-artifact@v4
+        with:
+          name: backend-output
+          path: _output/
+
+      - name: Download frontend output
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-output
+          path: _output/UI/
+
+      - name: Create packages
+        run: ./build.sh --packages --enable-extra-platforms
+
+      - name: Set executable bits
+        run: |
+          find . -name "ffprobe" -exec chmod a+x {} \;
+          find . -name "Radarr" -exec chmod a+x {} \;
+          find . -name "Radarr.Update" -exec chmod a+x {} \;
+
+      - name: Create archives
+        run: |
+          mkdir -p _archives
+
+          # Windows zips
+          cd _artifacts/win-x64/net8.0 && zip -r ../../../_archives/Radarr.${BUILDNAME}.windows-core-x64.zip . && cd ../../..
+          cd _artifacts/win-x86/net8.0 && zip -r ../../../_archives/Radarr.${BUILDNAME}.windows-core-x86.zip . && cd ../../..
+
+          # macOS app zips
+          cd _artifacts/osx-x64-app/net8.0 && zip -r ../../../_archives/Radarr.${BUILDNAME}.osx-app-core-x64.zip . && cd ../../..
+          cd _artifacts/osx-arm64-app/net8.0 && zip -r ../../../_archives/Radarr.${BUILDNAME}.osx-app-core-arm64.zip . && cd ../../..
+
+          # macOS tars
+          tar -czf _archives/Radarr.${BUILDNAME}.osx-core-x64.tar.gz -C _artifacts/osx-x64/net8.0 .
+          tar -czf _archives/Radarr.${BUILDNAME}.osx-core-arm64.tar.gz -C _artifacts/osx-arm64/net8.0 .
+
+          # Linux tars
+          tar -czf _archives/Radarr.${BUILDNAME}.linux-core-x64.tar.gz -C _artifacts/linux-x64/net8.0 .
+          tar -czf _archives/Radarr.${BUILDNAME}.linux-musl-core-x64.tar.gz -C _artifacts/linux-musl-x64/net8.0 .
+          tar -czf _archives/Radarr.${BUILDNAME}.linux-core-arm.tar.gz -C _artifacts/linux-arm/net8.0 .
+          tar -czf _archives/Radarr.${BUILDNAME}.linux-musl-core-arm.tar.gz -C _artifacts/linux-musl-arm/net8.0 .
+          tar -czf _archives/Radarr.${BUILDNAME}.linux-core-arm64.tar.gz -C _artifacts/linux-arm64/net8.0 .
+          tar -czf _archives/Radarr.${BUILDNAME}.linux-musl-core-arm64.tar.gz -C _artifacts/linux-musl-arm64/net8.0 .
+
+          # FreeBSD tar
+          tar -czf _archives/Radarr.${BUILDNAME}.freebsd-core-x64.tar.gz -C _artifacts/freebsd-x64/net8.0 .
+
+      - name: Upload packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: packages
+          path: _archives/
+
+  # ---------------------------------------------------------------------------
+  # Lint
+  # ---------------------------------------------------------------------------
+  lint:
+    runs-on: ubuntu-24.04
+    needs: setup
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Cache Yarn packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/yarn
+          key: yarn-${{ runner.os }}-${{ hashFiles('yarn.lock') }}
+          restore-keys: yarn-${{ runner.os }}-
+
+      - name: Lint
+        run: ./build.sh --lint
+        env:
+          FORCE_COLOR: '0'
+          YARN_CACHE_FOLDER: ~/.cache/yarn
+
+  # ---------------------------------------------------------------------------
+  # Unit Tests: native platforms
+  # ---------------------------------------------------------------------------
+  unit-test-native:
+    needs: [build-backend, setup]
+    if: needs.setup.outputs.backend_changed == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            platform: Mac
+            artifact: osx-x64-tests
+            test-name: osx-x64
+          - os: windows-2025
+            platform: Windows
+            artifact: win-x64-tests
+            test-name: win-x64
+          - os: ubuntu-24.04
+            platform: Linux
+            artifact: linux-x64-tests
+            test-name: linux-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Download test artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: _tests/
+
+      - name: Enable Windows test service
+        if: matrix.platform == 'Windows'
+        run: Set-Service SCardSvr -StartupType Manual
+        shell: pwsh
+
+      - name: Set executable permissions
+        if: matrix.platform != 'Windows'
+        run: |
+          chmod a+x _tests/ffprobe
+          find _tests -name "Radarr.Test.Dummy" -exec chmod a+x {} \;
+
+      - name: Run unit tests
+        run: |
+          chmod a+x _tests/test.sh
+          _tests/test.sh ${{ matrix.platform }} Unit Test
+        env:
+          TEST_DIR: ${{ github.workspace }}/_tests
+        shell: bash
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ${{ matrix.test-name }}-unit-test-results
+          path: '**/TestResult.xml'
+
+      - name: Report test results
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: ${{ matrix.test-name }} Unit Tests
+          path: '**/TestResult.xml'
+          reporter: java-junit
+          fail-on-error: true
+
+  # ---------------------------------------------------------------------------
+  # Unit Tests: Docker (Alpine / musl)
+  # ---------------------------------------------------------------------------
+  unit-test-docker:
+    runs-on: ubuntu-24.04
+    needs: [build-backend, setup]
+    if: needs.setup.outputs.backend_changed == 'true'
+    container:
+      image: ghcr.io/servarr/testimages:alpine
+    timeout-minutes: 10
+    steps:
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Download test artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-musl-x64-tests
+          path: _tests/
+
+      - name: Set executable permissions
+        run: |
+          chmod a+x _tests/ffprobe
+          find _tests -name "Radarr.Test.Dummy" -exec chmod a+x {} \;
+
+      - name: Run unit tests
+        run: |
+          chmod a+x _tests/test.sh
+          _tests/test.sh Linux Unit Test
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: musl-unit-test-results
+          path: '**/TestResult.xml'
+
+  # ---------------------------------------------------------------------------
+  # Unit Tests: Postgres
+  # ---------------------------------------------------------------------------
+  unit-test-postgres:
+    runs-on: ubuntu-24.04
+    needs: [build-backend, setup]
+    if: needs.setup.outputs.backend_changed == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres-version: ['14', '15']
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgres-version }}
+        env:
+          POSTGRES_USER: radarr
+          POSTGRES_PASSWORD: radarr
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    timeout-minutes: 10
+    env:
+      Radarr__Postgres__Host: localhost
+      Radarr__Postgres__Port: '5432'
+      Radarr__Postgres__User: radarr
+      Radarr__Postgres__Password: radarr
+    steps:
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Download test artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-x64-tests
+          path: _tests/
+
+      - name: Set executable permissions
+        run: |
+          chmod a+x _tests/ffprobe
+          find _tests -name "Radarr.Test.Dummy" -exec chmod a+x {} \;
+
+      - name: Run unit tests
+        run: |
+          chmod a+x _tests/test.sh
+          _tests/test.sh Linux Unit Test
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: postgres${{ matrix.postgres-version }}-unit-test-results
+          path: '**/TestResult.xml'
+
+  # ---------------------------------------------------------------------------
+  # Integration Tests: native platforms
+  # ---------------------------------------------------------------------------
+  integration-native:
+    needs: [packages, build-backend, setup]
+    if: needs.setup.outputs.backend_changed == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            platform: Mac
+            artifact: osx-x64-tests
+            test-name: osx-x64
+            pattern: 'Radarr.*.osx-core-x64.tar.gz'
+            extract-cmd: 'tar xzf'
+          - os: windows-2025
+            platform: Windows
+            artifact: win-x64-tests
+            test-name: win-x64
+            pattern: 'Radarr.*.windows-core-x64.zip'
+            extract-cmd: 'unzip'
+          - os: ubuntu-24.04
+            platform: Linux
+            artifact: linux-x64-tests
+            test-name: linux-x64
+            pattern: 'Radarr.*.linux-core-x64.tar.gz'
+            extract-cmd: 'tar xzf'
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Download test artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: _tests/
+
+      - name: Download packages
+        uses: actions/download-artifact@v4
+        with:
+          name: packages
+          path: _packages/
+
+      - name: Extract package
+        run: |
+          mkdir -p _extracted
+          ARCHIVE=$(find _packages -name "${{ matrix.pattern }}" | head -1)
+          echo "Extracting: $ARCHIVE"
+          if [[ "$ARCHIVE" == *.zip ]]; then
+            unzip "$ARCHIVE" -d _extracted/
+          else
+            tar xzf "$ARCHIVE" -C _extracted/
+          fi
+          mkdir -p ./bin/
+          cp -r _extracted/Radarr/. ./bin/ 2>/dev/null || cp -r _extracted/. ./bin/
+        shell: bash
+
+      - name: Enable Windows test service
+        if: matrix.platform == 'Windows'
+        run: Set-Service SCardSvr -StartupType Manual
+        shell: pwsh
+
+      - name: Set executable permissions
+        if: matrix.platform != 'Windows'
+        run: |
+          chmod a+x _tests/ffprobe
+          find _tests -name "Radarr.Test.Dummy" -exec chmod a+x {} \;
+
+      - name: Run integration tests
+        run: |
+          chmod a+x _tests/test.sh
+          _tests/test.sh ${{ matrix.platform }} Integration Test
+        env:
+          TEST_DIR: ${{ github.workspace }}/_tests
+        shell: bash
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ${{ matrix.test-name }}-integration-test-results
+          path: '**/TestResult.xml'
+
+  # ---------------------------------------------------------------------------
+  # Integration Tests: Docker (Alpine / musl)
+  # ---------------------------------------------------------------------------
+  integration-docker:
+    runs-on: ubuntu-24.04
+    needs: [packages, build-backend, setup]
+    if: needs.setup.outputs.backend_changed == 'true'
+    container:
+      image: ghcr.io/servarr/testimages:alpine
+    timeout-minutes: 15
+    steps:
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Download test artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-musl-x64-tests
+          path: _tests/
+
+      - name: Download packages
+        uses: actions/download-artifact@v4
+        with:
+          name: packages
+          path: _packages/
+
+      - name: Extract package
+        run: |
+          mkdir -p _extracted
+          ARCHIVE=$(find _packages -name "Radarr.*.linux-musl-core-x64.tar.gz" | head -1)
+          tar xzf "$ARCHIVE" -C _extracted/
+          mkdir -p ./bin/
+          cp -r _extracted/Radarr/. ./bin/ 2>/dev/null || cp -r _extracted/. ./bin/
+
+      - name: Set executable permissions
+        run: |
+          chmod a+x _tests/ffprobe
+          find _tests -name "Radarr.Test.Dummy" -exec chmod a+x {} \;
+
+      - name: Run integration tests
+        run: |
+          chmod a+x _tests/test.sh
+          _tests/test.sh Linux Integration Test
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: musl-integration-test-results
+          path: '**/TestResult.xml'
+
+  # ---------------------------------------------------------------------------
+  # Integration Tests: Postgres
+  # ---------------------------------------------------------------------------
+  integration-postgres:
+    runs-on: ubuntu-24.04
+    needs: [packages, build-backend, setup]
+    if: needs.setup.outputs.backend_changed == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres-version: ['14', '15']
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgres-version }}
+        env:
+          POSTGRES_USER: radarr
+          POSTGRES_PASSWORD: radarr
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    timeout-minutes: 15
+    env:
+      Radarr__Postgres__Host: localhost
+      Radarr__Postgres__Port: '5432'
+      Radarr__Postgres__User: radarr
+      Radarr__Postgres__Password: radarr
+    steps:
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Download test artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-x64-tests
+          path: _tests/
+
+      - name: Download packages
+        uses: actions/download-artifact@v4
+        with:
+          name: packages
+          path: _packages/
+
+      - name: Extract package
+        run: |
+          mkdir -p _extracted
+          ARCHIVE=$(find _packages -name "Radarr.*.linux-core-x64.tar.gz" | head -1)
+          tar xzf "$ARCHIVE" -C _extracted/
+          mkdir -p ./bin/
+          cp -r _extracted/Radarr/. ./bin/ 2>/dev/null || cp -r _extracted/. ./bin/
+
+      - name: Set executable permissions
+        run: |
+          chmod a+x _tests/ffprobe
+          find _tests -name "Radarr.Test.Dummy" -exec chmod a+x {} \;
+
+      - name: Run integration tests
+        run: |
+          chmod a+x _tests/test.sh
+          _tests/test.sh Linux Integration Test
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: postgres${{ matrix.postgres-version }}-integration-test-results
+          path: '**/TestResult.xml'
+
+  # ---------------------------------------------------------------------------
+  # Windows Installer
+  # ---------------------------------------------------------------------------
+  installer:
+    runs-on: windows-2025
+    needs: [build-backend, build-frontend, setup]
+    env:
+      RADARRVERSION: ${{ needs.setup.outputs.radarr_version }}
+      MAJORVERSION: ${{ env.MAJOR_VERSION }}
+      INNOVERSION: ${{ env.INNO_VERSION }}
+      BUILD_SOURCEBRANCHNAME: ${{ needs.setup.outputs.branch_name }}
+      BUILDNAME: ${{ needs.setup.outputs.branch_name }}.${{ needs.setup.outputs.radarr_version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Download backend output
+        uses: actions/download-artifact@v4
+        with:
+          name: backend-output
+          path: _output/
+
+      - name: Download frontend output
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-output
+          path: _output/UI/
+
+      - name: Create installer
+        run: ./build.sh --packages --installer
+        shell: bash
+
+      - name: Stage installer files
+        run: |
+          mkdir -p _installer_output
+          cp distribution/windows/setup/output/Radarr.*win-x64.exe "_installer_output/Radarr.${BUILDNAME}.windows-core-x64-installer.exe"
+          cp distribution/windows/setup/output/Radarr.*win-x86.exe "_installer_output/Radarr.${BUILDNAME}.windows-core-x86-installer.exe"
+        shell: bash
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: _installer_output/
+
+  # ---------------------------------------------------------------------------
+  # Sentry: upload source maps and create release
+  # ---------------------------------------------------------------------------
+  sentry:
+    runs-on: ubuntu-24.04
+    needs: [packages, build-frontend, setup]
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/master')
+    env:
+      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+      SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+      SENTRY_URL: ${{ vars.SENTRY_URL }}
+    steps:
+      - name: Download frontend output
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-output
+          path: _output/UI/
+
+      - name: Install Sentry CLI
+        run: curl -sL https://sentry.io/get-cli/ | bash
+
+      - name: Upload source maps
+        env:
+          RADARR_VERSION: ${{ needs.setup.outputs.radarr_version }}
+          BRANCH_NAME: ${{ needs.setup.outputs.branch_name }}
+        run: |
+          RELEASENAME="Radarr@${RADARR_VERSION}-${BRANCH_NAME}"
+          sentry-cli releases new --finalize -p radarr -p radarr-ui -p radarr-update "${RELEASENAME}"
+          sentry-cli releases -p radarr-ui files "${RELEASENAME}" upload-sourcemaps _output/UI/ --rewrite
+          sentry-cli releases set-commits --auto "${RELEASENAME}"
+          if [ "${GITHUB_REF}" = "refs/heads/develop" ]; then
+            sentry-cli releases deploys "${RELEASENAME}" new -e nightly
+          else
+            sentry-cli releases deploys "${RELEASENAME}" new -e production
+          fi
+
+  # ---------------------------------------------------------------------------
+  # SonarQube: Frontend analysis
+  # ---------------------------------------------------------------------------
+  sonarqube-frontend:
+    runs-on: ubuntu-24.04
+    needs: setup
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: SonarQube scan
+        uses: SonarSource/sonarqube-scan-action@v5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN_FRONTEND }}
+          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+        with:
+          args: >
+            -Dsonar.projectKey=Radarr_Radarr.UI
+            -Dsonar.sources=./frontend
+            -Dsonar.projectVersion=${{ needs.setup.outputs.radarr_version }}
+
+  # ---------------------------------------------------------------------------
+  # SonarQube: Backend analysis with coverage
+  # ---------------------------------------------------------------------------
+  sonarqube-backend:
+    runs-on: windows-2025
+    needs: setup
+    if: needs.setup.outputs.backend_changed == 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Enable Windows test service
+        run: Set-Service SCardSvr -StartupType Manual
+        shell: pwsh
+
+      - name: Install SonarScanner
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: dotnet tool install --global dotnet-sonarscanner
+
+      - name: SonarQube begin
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN_BACKEND }}
+        run: |
+          dotnet sonarscanner begin \
+            /k:"Radarr_Radarr" \
+            /d:sonar.token="${SONAR_TOKEN}" \
+            /d:sonar.host.url="${{ vars.SONAR_HOST_URL }}" \
+            /d:sonar.projectVersion="${{ needs.setup.outputs.radarr_version }}" \
+            /d:sonar.exclusions="**/obj/**,**/*.dll,**/NzbDrone.Core.Test/Files/**/*,./frontend/**,**/ExternalModules/**,./src/Libraries/**" \
+            /d:sonar.coverage.exclusions="**/Radarr.Api.V3/**/*" \
+            /d:sonar.cs.cobertura.reportsPaths="$(pwd)/CoverageResults/**/coverage.cobertura.xml" \
+            /d:sonar.cs.nunit.reportsPaths="$(pwd)/TestResult.xml"
+        shell: bash
+
+      - name: Build and run coverage tests
+        run: |
+          ./build.sh --backend -f net8.0 -r win-x64
+          TEST_DIR=_tests/net8.0/win-x64/publish/ ./test.sh Windows Unit Coverage
+        shell: bash
+
+      - name: SonarQube end
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN_BACKEND }}
+        run: dotnet sonarscanner end /d:sonar.token="${{ secrets.SONAR_TOKEN_BACKEND }}"
+        shell: bash
+
+      - name: Generate coverage report
+        uses: danielpalme/ReportGenerator-GitHub-Action@5
+        if: always()
+        with:
+          reports: CoverageResults/**/coverage.cobertura.xml
+          targetdir: CoverageResults/combined
+          reporttypes: HtmlInline;Cobertura;Badges
+          sourcedirs: src
+
+  # ---------------------------------------------------------------------------
+  # API Docs: generate OpenAPI spec, create PR
+  # ---------------------------------------------------------------------------
+  api-docs:
+    runs-on: windows-2025
+    needs: setup
+    if: github.ref == 'refs/heads/develop' && needs.setup.outputs.backend_changed == 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+          persist-credentials: true
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Generate OpenAPI spec
+        run: ./docs.sh Windows
+        shell: bash
+
+      - name: Commit and create PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.email "ci@starosdev.com"
+          git config user.name "Starosdev CI"
+          git checkout -b api-docs
+          git add .
+          if git diff --cached --quiet; then
+            echo "No changes since last run"
+          else
+            git commit -m "Automated API Docs update"
+            git push -f --set-upstream origin api-docs
+            gh pr create --repo Starosdev/Radarr --title "Update API docs" --base develop --head api-docs --body "Automated API documentation update." || echo "PR already exists"
+          fi
+        shell: bash
+
+      - name: Upload API docs
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: api-docs
+          path: src/Radarr.Api.V3/openapi.json
+
+  # ---------------------------------------------------------------------------
+  # Discord Notification
+  # ---------------------------------------------------------------------------
+  discord-notify:
+    runs-on: ubuntu-24.04
+    needs:
+      - setup
+      - build-backend
+      - build-frontend
+      - packages
+      - lint
+      - unit-test-native
+      - unit-test-docker
+      - unit-test-postgres
+      - integration-native
+      - integration-docker
+      - integration-postgres
+      - installer
+      - sentry
+      - sonarqube-frontend
+      - sonarqube-backend
+      - api-docs
+    if: always() && github.event_name == 'push'
+    steps:
+      - name: Send Discord notification
+        env:
+          DISCORD_WEBHOOK_KEY: ${{ secrets.DISCORD_WEBHOOK_KEY }}
+          DISCORD_WEBHOOK_ID: ${{ vars.DISCORD_WEBHOOK_ID }}
+          BRANCH_NAME: ${{ needs.setup.outputs.branch_name }}
+          RADARR_VERSION: ${{ needs.setup.outputs.radarr_version }}
+        run: |
+          if [ "${{ needs.packages.result }}" = "success" ] && \
+             [ "${{ needs.build-backend.result }}" = "success" ] && \
+             [ "${{ needs.build-frontend.result }}" = "success" ]; then
+            COLOR=3066993
+            STATUS="Succeeded"
+          else
+            COLOR=15158332
+            STATUS="Failed"
+          fi
+
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          # Only send if webhook is configured
+          if [ -n "$DISCORD_WEBHOOK_KEY" ] && [ -n "$DISCORD_WEBHOOK_ID" ]; then
+            curl -s -H "Content-Type: application/json" \
+              -d "{
+                \"username\": \"GitHub Actions\",
+                \"embeds\": [{
+                  \"title\": \"Radarr ${BRANCH_NAME} - ${RADARR_VERSION}\",
+                  \"description\": \"Build ${STATUS}\",
+                  \"url\": \"${RUN_URL}\",
+                  \"color\": ${COLOR},
+                  \"fields\": [
+                    {\"name\": \"Branch\", \"value\": \"${BRANCH_NAME}\", \"inline\": true},
+                    {\"name\": \"Version\", \"value\": \"${RADARR_VERSION}\", \"inline\": true}
+                  ]
+                }]
+              }" \
+              "https://discord.com/api/webhooks/${DISCORD_WEBHOOK_ID}/${DISCORD_WEBHOOK_KEY}"
+          else
+            echo "Discord webhook not configured, skipping notification"
+          fi
