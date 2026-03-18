@@ -934,7 +934,7 @@ jobs:
       - name: Send Discord notification
         env:
           DISCORD_WEBHOOK_KEY: ${{ secrets.DISCORD_WEBHOOK_KEY }}
-          DISCORD_CHANNEL_ID: ${{ vars.DISCORD_CHANNEL_ID }}
+          DISCORD_WEBHOOK_ID: ${{ vars.DISCORD_WEBHOOK_ID }}
           BRANCH_NAME: ${{ needs.setup.outputs.branch_name }}
           RADARR_VERSION: ${{ needs.setup.outputs.radarr_version }}
         run: |
@@ -951,7 +951,7 @@ jobs:
           RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
           # Only send if webhook is configured
-          if [ -n "$DISCORD_WEBHOOK_KEY" ] && [ -n "$DISCORD_CHANNEL_ID" ]; then
+          if [ -n "$DISCORD_WEBHOOK_KEY" ] && [ -n "$DISCORD_WEBHOOK_ID" ]; then
             curl -s -H "Content-Type: application/json" \
               -d "{
                 \"username\": \"GitHub Actions\",
@@ -966,7 +966,7 @@ jobs:
                   ]
                 }]
               }" \
-              "https://discord.com/api/webhooks/${DISCORD_CHANNEL_ID}/${DISCORD_WEBHOOK_KEY}"
+              "https://discord.com/api/webhooks/${DISCORD_WEBHOOK_ID}/${DISCORD_WEBHOOK_KEY}"
           else
             echo "Discord webhook not configured, skipping notification"
           fi
