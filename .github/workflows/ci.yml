@@ -771,9 +771,9 @@ jobs:
           fi
 
   # ---------------------------------------------------------------------------
-  # SonarCloud: Frontend analysis
+  # SonarQube: Frontend analysis
   # ---------------------------------------------------------------------------
-  sonarcloud-frontend:
+  sonarqube-frontend:
     runs-on: ubuntu-24.04
     needs: setup
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
@@ -783,22 +783,21 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: SonarCloud scan
+      - name: SonarQube scan
         uses: SonarSource/sonarqube-scan-action@v5
         env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN_FRONTEND }}
+          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
         with:
           args: >
             -Dsonar.projectKey=Radarr_Radarr.UI
-            -Dsonar.organization=radarr
             -Dsonar.sources=./frontend
-            -Dsonar.host.url=https://sonarcloud.io
             -Dsonar.projectVersion=${{ needs.setup.outputs.radarr_version }}
 
   # ---------------------------------------------------------------------------
-  # SonarCloud: Backend analysis with coverage
+  # SonarQube: Backend analysis with coverage
   # ---------------------------------------------------------------------------
-  sonarcloud-backend:
+  sonarqube-backend:
     runs-on: windows-2025
     needs: setup
     if: needs.setup.outputs.backend_changed == 'true'
@@ -822,16 +821,15 @@ jobs:
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         run: dotnet tool install --global dotnet-sonarscanner
 
-      - name: SonarCloud begin
+      - name: SonarQube begin
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN_BACKEND }}
         run: |
           dotnet sonarscanner begin \
             /k:"Radarr_Radarr" \
-            /o:"radarr" \
             /d:sonar.token="${SONAR_TOKEN}" \
-            /d:sonar.host.url="https://sonarcloud.io" \
+            /d:sonar.host.url="${{ vars.SONAR_HOST_URL }}" \
             /d:sonar.projectVersion="${{ needs.setup.outputs.radarr_version }}" \
             /d:sonar.exclusions="**/obj/**,**/*.dll,**/NzbDrone.Core.Test/Files/**/*,./frontend/**,**/ExternalModules/**,./src/Libraries/**" \
             /d:sonar.coverage.exclusions="**/Radarr.Api.V3/**/*" \
@@ -845,11 +843,11 @@ jobs:
           TEST_DIR=_tests/net8.0/win-x64/publish/ ./test.sh Windows Unit Coverage
         shell: bash
 
-      - name: SonarCloud end
+      - name: SonarQube end
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        run: dotnet sonarscanner end /d:sonar.token="${{ secrets.SONAR_TOKEN }}"
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN_BACKEND }}
+        run: dotnet sonarscanner end /d:sonar.token="${{ secrets.SONAR_TOKEN_BACKEND }}"
         shell: bash
 
       - name: Generate coverage report
@@ -928,8 +926,8 @@ jobs:
       - integration-postgres
       - installer
       - sentry
-      - sonarcloud-frontend
-      - sonarcloud-backend
+      - sonarqube-frontend
+      - sonarqube-backend
       - api-docs
     if: always() && github.event_name == 'push'
     steps:
