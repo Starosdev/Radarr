@@ -6,13 +6,17 @@ on:
       - develop
       - master
     paths-ignore:
-      - '.github/**'
+      - '.github/workflows/labeler.yml'
+      - '.github/workflows/label-actions.yml'
+      - '.github/workflows/lock.yml'
       - 'src/Radarr.Api.*/openapi.json'
   pull_request:
     branches:
       - develop
     paths-ignore:
-      - '.github/**'
+      - '.github/workflows/labeler.yml'
+      - '.github/workflows/label-actions.yml'
+      - '.github/workflows/lock.yml'
       - 'src/NzbDrone.Core/Localization/Core/**'
       - 'src/Radarr.Api.*/openapi.json'
 
