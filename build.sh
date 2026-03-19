@@ -206,7 +206,11 @@ PackageWindows()
     local folder=$artifactsFolder/$runtime/$framework/Radarr
     
     PackageFiles "$folder" "$framework" "$runtime"
-    cp -r $outputFolder/$framework-windows/$runtime/publish/* $folder
+    if [ -d "$outputFolder/$framework-windows/$runtime/publish" ]; then
+        cp -r $outputFolder/$framework-windows/$runtime/publish/* $folder
+    else
+        echo "Skipping Windows-specific overlay (net8.0-windows not built on this platform)"
+    fi
 
     echo "Removing Radarr.Mono"
     rm -f $folder/Radarr.Mono.*
