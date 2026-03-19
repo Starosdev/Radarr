@@ -50,11 +50,7 @@ describe('Icon', () => {
 
   it('applies containerClassName to the title wrapper span', () => {
     render(
-      <Icon
-        name={faCheck}
-        title="Test"
-        containerClassName="my-container"
-      />
+      <Icon name={faCheck} title="Test" containerClassName="my-container" />
     );
     const span = screen.getByTitle('Test');
 
@@ -69,7 +65,7 @@ describe('Icon', () => {
   });
 
   it('renders spinning icon when isSpinning is true', () => {
-    const { container } = render(<Icon name={faSpinner} isSpinning />);
+    const { container } = render(<Icon name={faSpinner} isSpinning={true} />);
     const svg = container.querySelector('svg') as SVGElement;
 
     expect(svg.classList.toString()).toContain('spin');

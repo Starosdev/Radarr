@@ -1,2 +1,5 @@
 **/JsLibraries/**
 **/*.css.d.ts
+**/test/setup.ts
+**/test/cssModuleMock.ts
+vitest.config.ts
