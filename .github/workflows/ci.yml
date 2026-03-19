@@ -748,6 +748,11 @@ jobs:
       SENTRY_ORG: ${{ vars.SENTRY_ORG }}
       SENTRY_URL: ${{ vars.SENTRY_URL }}
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Download frontend output
         uses: actions/download-artifact@v4
         with:
