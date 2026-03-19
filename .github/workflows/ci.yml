@@ -374,15 +374,6 @@ jobs:
           name: ${{ matrix.test-name }}-unit-test-results
           path: '**/TestResult.xml'
 
-      - name: Report test results
-        uses: dorny/test-reporter@v1
-        if: always()
-        with:
-          name: ${{ matrix.test-name }} Unit Tests
-          path: '**/TestResult.xml'
-          reporter: java-junit
-          fail-on-error: true
-
   # ---------------------------------------------------------------------------
   # Unit Tests: Docker (Alpine / musl)
   # ---------------------------------------------------------------------------
@@ -837,9 +828,9 @@ jobs:
         run: >-
           dotnet sonarscanner begin
           /k:"Radarr_Radarr"
-          /d:sonar.token="$SONAR_TOKEN"
-          /d:sonar.host.url="$SONAR_HOST_URL"
-          /d:sonar.projectVersion="$RADARR_VERSION"
+          /d:sonar.token="$env:SONAR_TOKEN"
+          /d:sonar.host.url="$env:SONAR_HOST_URL"
+          /d:sonar.projectVersion="$env:RADARR_VERSION"
           /d:sonar.exclusions="**/obj/**,**/*.dll,**/NzbDrone.Core.Test/Files/**/*,./frontend/**,**/ExternalModules/**,./src/Libraries/**"
           /d:sonar.coverage.exclusions="**/Radarr.Api.V3/**/*"
           /d:sonar.cs.cobertura.reportsPaths="${{ github.workspace }}/CoverageResults/**/coverage.cobertura.xml"
