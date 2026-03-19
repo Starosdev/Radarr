@@ -47,6 +47,9 @@ jobs:
         id: counter
         env:
           MAJOR_VERSION: ${{ env.MAJOR_VERSION }}
+          HEAD_REF: ${{ github.head_ref }}
+          REF_NAME: ${{ github.ref_name }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           git fetch --tags --force
           LAST=$(git tag -l 'build-counter-*' | sed 's/build-counter-//' | sort -n | tail -1)
@@ -54,10 +57,10 @@ jobs:
           echo "build_number=$NEXT" >> "$GITHUB_OUTPUT"
           echo "radarr_version=${MAJOR_VERSION}.${NEXT}" >> "$GITHUB_OUTPUT"
 
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            echo "branch_name=${{ github.head_ref }}" >> "$GITHUB_OUTPUT"
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            echo "branch_name=$HEAD_REF" >> "$GITHUB_OUTPUT"
           else
-            echo "branch_name=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+            echo "branch_name=$REF_NAME" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Push build counter tag
@@ -695,8 +698,8 @@ jobs:
     needs: [build-backend, build-frontend, setup]
     env:
       RADARRVERSION: ${{ needs.setup.outputs.radarr_version }}
-      MAJORVERSION: ${{ env.MAJOR_VERSION }}
-      INNOVERSION: ${{ env.INNO_VERSION }}
+      MAJORVERSION: '6.1.1'
+      INNOVERSION: '6.2.2'
       BUILD_SOURCEBRANCHNAME: ${{ needs.setup.outputs.branch_name }}
       BUILDNAME: ${{ needs.setup.outputs.branch_name }}.${{ needs.setup.outputs.radarr_version }}
     steps:
