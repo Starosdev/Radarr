@@ -22,25 +22,31 @@ variables:
   linuxImage: 'ubuntu-24.04'
   macImage: 'macOS-15'
 
-trigger:
-  branches:
-    include:
-    - develop
-    - master
-  paths:
-    exclude:
-      - .github
-      - src/Radarr.Api.*/openapi.json
+# CI/CD has been migrated to GitHub Actions (.github/workflows/ci.yml)
+# Triggers disabled to prevent duplicate builds
+trigger: none
+pr: none
 
-pr:
-  branches:
-    include:
-    - develop
-  paths:
-    exclude:
-    - .github
-    - src/NzbDrone.Core/Localization/Core
-    - src/Radarr.Api.*/openapi.json
+# Original trigger configuration (preserved for reference):
+# trigger:
+#   branches:
+#     include:
+#     - develop
+#     - master
+#   paths:
+#     exclude:
+#       - .github
+#       - src/Radarr.Api.*/openapi.json
+#
+# pr:
+#   branches:
+#     include:
+#     - develop
+#   paths:
+#     exclude:
+#     - .github
+#     - src/NzbDrone.Core/Localization/Core
+#     - src/Radarr.Api.*/openapi.json
 
 stages:
   - stage: Setup

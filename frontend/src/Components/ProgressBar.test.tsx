@@ -29,13 +29,13 @@ describe('ProgressBar', () => {
   });
 
   it('shows text when showText is true', () => {
-    render(<ProgressBar progress={50} showText />);
+    render(<ProgressBar progress={50} showText={true} />);
 
     expect(screen.getByText('50.0%')).toBeInTheDocument();
   });
 
   it('shows custom text when provided', () => {
-    render(<ProgressBar progress={50} showText text="Half done" />);
+    render(<ProgressBar progress={50} showText={true} text="Half done" />);
 
     expect(screen.getByText('Half done')).toBeInTheDocument();
   });

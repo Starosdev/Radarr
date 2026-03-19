@@ -137,6 +137,7 @@ namespace NzbDrone.Core.MediaFiles.MediaInfo
                         sideData = sideData.Concat(dvSideData).ToList();
                     }
                 }
+
                 mediaInfoModel.VideoHdrFormat = GetHdrFormat(mediaInfoModel.VideoBitDepth, mediaInfoModel.VideoColourPrimaries, mediaInfoModel.VideoTransferCharacteristics, sideData);
 
                 return mediaInfoModel;

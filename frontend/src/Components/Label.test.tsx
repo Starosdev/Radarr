@@ -31,7 +31,7 @@ describe('Label', () => {
   });
 
   it('applies outline class when outline is true', () => {
-    render(<Label outline>Outline</Label>);
+    render(<Label outline={true}>Outline</Label>);
     const el = screen.getByText('Outline');
 
     expect(el.className).toContain('outline');
