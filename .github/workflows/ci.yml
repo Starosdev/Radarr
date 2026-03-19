@@ -27,7 +27,7 @@ concurrency:
 env:
   MAJOR_VERSION: '6.1.1'
   DOTNET_VERSION: '8.0.405'
-  NODE_VERSION: '20.11.1'
+  NODE_VERSION: '20.19.0'
   INNO_VERSION: '6.2.2'
 
 jobs:
@@ -832,17 +832,19 @@ jobs:
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN_BACKEND }}
-        run: |
-          dotnet sonarscanner begin \
-            /k:"Radarr_Radarr" \
-            /d:sonar.token="${SONAR_TOKEN}" \
-            /d:sonar.host.url="${{ vars.SONAR_HOST_URL }}" \
-            /d:sonar.projectVersion="${{ needs.setup.outputs.radarr_version }}" \
-            /d:sonar.exclusions="**/obj/**,**/*.dll,**/NzbDrone.Core.Test/Files/**/*,./frontend/**,**/ExternalModules/**,./src/Libraries/**" \
-            /d:sonar.coverage.exclusions="**/Radarr.Api.V3/**/*" \
-            /d:sonar.cs.cobertura.reportsPaths="$(pwd)/CoverageResults/**/coverage.cobertura.xml" \
-            /d:sonar.cs.nunit.reportsPaths="$(pwd)/TestResult.xml"
-        shell: bash
+          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+          RADARR_VERSION: ${{ needs.setup.outputs.radarr_version }}
+        run: >-
+          dotnet sonarscanner begin
+          /k:"Radarr_Radarr"
+          /d:sonar.token="$SONAR_TOKEN"
+          /d:sonar.host.url="$SONAR_HOST_URL"
+          /d:sonar.projectVersion="$RADARR_VERSION"
+          /d:sonar.exclusions="**/obj/**,**/*.dll,**/NzbDrone.Core.Test/Files/**/*,./frontend/**,**/ExternalModules/**,./src/Libraries/**"
+          /d:sonar.coverage.exclusions="**/Radarr.Api.V3/**/*"
+          /d:sonar.cs.cobertura.reportsPaths="${{ github.workspace }}/CoverageResults/**/coverage.cobertura.xml"
+          /d:sonar.cs.nunit.reportsPaths="${{ github.workspace }}/TestResult.xml"
+        shell: pwsh
 
       - name: Build and run coverage tests
         run: |
@@ -854,8 +856,8 @@ jobs:
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN_BACKEND }}
-        run: dotnet sonarscanner end /d:sonar.token="${{ secrets.SONAR_TOKEN_BACKEND }}"
-        shell: bash
+        run: dotnet sonarscanner end /d:sonar.token="$env:SONAR_TOKEN"
+        shell: pwsh
 
       - name: Generate coverage report
         uses: danielpalme/ReportGenerator-GitHub-Action@5
