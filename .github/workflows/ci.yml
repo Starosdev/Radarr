@@ -825,16 +825,16 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN_BACKEND }}
           SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
           RADARR_VERSION: ${{ needs.setup.outputs.radarr_version }}
-        run: >-
-          dotnet sonarscanner begin
-          /k:"Radarr_Radarr"
-          /d:sonar.token="$env:SONAR_TOKEN"
-          /d:sonar.host.url="$env:SONAR_HOST_URL"
-          /d:sonar.projectVersion="$env:RADARR_VERSION"
-          /d:sonar.exclusions="**/obj/**,**/*.dll,**/NzbDrone.Core.Test/Files/**/*,./frontend/**,**/ExternalModules/**,./src/Libraries/**"
-          /d:sonar.coverage.exclusions="**/Radarr.Api.V3/**/*"
-          /d:sonar.cs.cobertura.reportsPaths="${{ github.workspace }}/CoverageResults/**/coverage.cobertura.xml"
-          /d:sonar.cs.nunit.reportsPaths="${{ github.workspace }}/TestResult.xml"
+        run: |
+          dotnet sonarscanner begin `
+            /k:"Radarr_Radarr" `
+            /d:sonar.token="$env:SONAR_TOKEN" `
+            /d:sonar.host.url="$env:SONAR_HOST_URL" `
+            /v:"$env:RADARR_VERSION" `
+            /d:sonar.exclusions="**/obj/**,**/*.dll,**/NzbDrone.Core.Test/Files/**/*,./frontend/**,**/ExternalModules/**,./src/Libraries/**" `
+            /d:sonar.coverage.exclusions="**/Radarr.Api.V3/**/*" `
+            /d:sonar.cs.cobertura.reportsPaths="${{ github.workspace }}/CoverageResults/**/coverage.cobertura.xml" `
+            /d:sonar.cs.nunit.reportsPaths="${{ github.workspace }}/TestResult.xml"
         shell: pwsh
 
       - name: Build and run coverage tests
