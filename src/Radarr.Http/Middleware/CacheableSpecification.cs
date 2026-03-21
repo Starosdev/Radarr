@@ -41,12 +41,12 @@ namespace Radarr.Http.Middleware
 
             var path = request.Path.Value ?? "";
 
-            if (path.EndsWith("/index.js"))
+            if (path.EndsWith("/index.js", StringComparison.Ordinal))
             {
                 return false;
             }
 
-            if (path.EndsWith("/initialize.json"))
+            if (path.EndsWith("/initialize.json", StringComparison.Ordinal))
             {
                 return false;
             }
