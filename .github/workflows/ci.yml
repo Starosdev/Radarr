@@ -719,9 +719,15 @@ jobs:
           name: frontend-output
           path: _output/UI/
 
+      - name: Install Inno Setup
+        run: choco install innosetup --version=${{ env.INNO_VERSION }} -y --no-progress
+        shell: pwsh
+
       - name: Create installer
         run: ./build.sh --packages --installer
         shell: bash
+        env:
+          ISCC_PATH: 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
 
       - name: Stage installer files
         run: |
@@ -770,7 +776,7 @@ jobs:
           RELEASENAME="Radarr@${RADARR_VERSION}-${BRANCH_NAME}"
           sentry-cli releases new --finalize -p radarr -p radarr-ui -p radarr-update "${RELEASENAME}"
           sentry-cli sourcemaps upload --release="${RELEASENAME}" -p radarr-ui _output/UI/
-          sentry-cli releases set-commits --auto "${RELEASENAME}"
+          sentry-cli releases set-commits --auto --ignore-missing "${RELEASENAME}"
           if [ "${GITHUB_REF}" = "refs/heads/develop" ]; then
             sentry-cli releases deploys "${RELEASENAME}" new -e nightly
           else
