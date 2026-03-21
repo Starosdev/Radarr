@@ -719,15 +719,22 @@ jobs:
           name: frontend-output
           path: _output/UI/
 
-      - name: Install Inno Setup
-        run: choco install innosetup --version=${{ env.INNO_VERSION }} -y --no-progress
+      - name: Find Inno Setup
+        id: find-inno
+        run: |
+          $iscc = Get-ChildItem -Path "C:\Program Files*\Inno Setup*" -Filter "ISCC.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($iscc) {
+            echo "ISCC_PATH=$($iscc.FullName)" >> $env:GITHUB_ENV
+            Write-Host "Found ISCC at: $($iscc.FullName)"
+          } else {
+            Write-Host "::error::Inno Setup not found on runner"
+            exit 1
+          }
         shell: pwsh
 
       - name: Create installer
         run: ./build.sh --packages --installer
         shell: bash
-        env:
-          ISCC_PATH: 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
 
       - name: Stage installer files
         run: |
