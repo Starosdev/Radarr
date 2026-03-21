@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Data.SQLite;
 using System.IO;
+using System.Net.Security;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
@@ -190,9 +191,16 @@ namespace NzbDrone.Host
                     {
                         if (enableSsl && sslCertPath.IsNotNullOrWhiteSpace())
                         {
+                            var (certificate, extraChain) = LoadSslCertificateWithChain(sslCertPath, sslCertPassword);
+                            var certContext = SslStreamCertificateContext.Create(certificate, extraChain);
+
                             options.ConfigureHttpsDefaults(configureOptions =>
                             {
-                                configureOptions.ServerCertificate = ValidateSslCertificate(sslCertPath, sslCertPassword);
+                                configureOptions.ServerCertificate = certificate;
+                                configureOptions.OnAuthenticate = (_, sslOptions) =>
+                                {
+                                    sslOptions.ServerCertificateContext = certContext;
+                                };
                             });
                         }
                     });
@@ -272,13 +280,32 @@ namespace NzbDrone.Host
             return $"{scheme}://{bindAddress}:{port}";
         }
 
-        private static X509Certificate2 ValidateSslCertificate(string cert, string password)
+        private static (X509Certificate2 Certificate, X509Certificate2Collection ExtraChain) LoadSslCertificateWithChain(string cert, string password)
         {
-            X509Certificate2 certificate;
+            X509Certificate2 leafCertificate = null;
+            var extraChain = new X509Certificate2Collection();
 
             try
             {
-                certificate = new X509Certificate2(cert, password, X509KeyStorageFlags.DefaultKeySet);
+                var collection = new X509Certificate2Collection();
+                collection.Import(cert, password, X509KeyStorageFlags.DefaultKeySet);
+
+                foreach (var certificate in collection)
+                {
+                    if (certificate.HasPrivateKey)
+                    {
+                        leafCertificate = certificate;
+                    }
+                    else
+                    {
+                        extraChain.Add(certificate);
+                    }
+                }
+
+                if (leafCertificate == null)
+                {
+                    throw new RadarrStartupException($"The SSL certificate file {cert} does not contain a certificate with a private key");
+                }
             }
             catch (CryptographicException ex)
             {
@@ -291,7 +318,7 @@ namespace NzbDrone.Host
                 throw new RadarrStartupException(ex);
             }
 
-            return certificate;
+            return (leafCertificate, extraChain);
         }
     }
 }
