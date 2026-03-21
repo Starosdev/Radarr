@@ -249,25 +249,41 @@ BuildInstaller()
 {
     local framework="$1"
     local runtime="$2"
-    
-    ./_inno/ISCC.exe distribution/windows/setup/radarr.iss "//DFramework=$framework" "//DRuntime=$runtime"
+    local iscc
+
+    if [ -n "${ISCC_PATH:-}" ] && [ -f "${ISCC_PATH}" ]; then
+        iscc="${ISCC_PATH}"
+    else
+        iscc="./_inno/ISCC.exe"
+    fi
+
+    "${iscc}" distribution/windows/setup/radarr.iss "//DFramework=$framework" "//DRuntime=$runtime"
 }
 
 InstallInno()
 {
+    if [ -n "${ISCC_PATH:-}" ] && [ -f "${ISCC_PATH}" ]; then
+        echo "Using system Inno Setup at ${ISCC_PATH}"
+        return
+    fi
+
     ProgressStart "Installing portable Inno Setup"
-    
+
     rm -rf _inno
     curl -s -L --fail --output innosetup.exe "https://files.jrsoftware.org/is/6/innosetup-${INNOVERSION:-6.4.2}.exe"
     mkdir _inno
     ./innosetup.exe //portable=1 //silent //currentuser //dir=.\\_inno
     rm innosetup.exe
-    
+
     ProgressEnd "Installed portable Inno Setup"
 }
 
 RemoveInno()
 {
+    if [ -n "${ISCC_PATH:-}" ]; then
+        return
+    fi
+
     rm -rf _inno
 }
 
