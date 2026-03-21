@@ -28,7 +28,7 @@ env:
   MAJOR_VERSION: '6.1.1'
   DOTNET_VERSION: '8.0.405'
   NODE_VERSION: '20.19.0'
-  INNO_VERSION: '6.2.2'
+  INNO_VERSION: '6.4.2'
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -694,7 +694,7 @@ jobs:
     env:
       RADARRVERSION: ${{ needs.setup.outputs.radarr_version }}
       MAJORVERSION: '6.1.1'
-      INNOVERSION: '6.2.2'
+      INNOVERSION: '6.4.2'
       BUILD_SOURCEBRANCHNAME: ${{ needs.setup.outputs.branch_name }}
       BUILDNAME: ${{ needs.setup.outputs.branch_name }}.${{ needs.setup.outputs.radarr_version }}
     steps:
