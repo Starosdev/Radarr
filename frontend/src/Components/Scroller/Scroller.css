@@ -12,7 +12,7 @@
 
 .vertical {
   overflow-x: hidden;
-  overflow-y: scroll;
+  overflow-y: auto;
 
   &.autoScroll {
     overflow-y: auto;
@@ -20,7 +20,7 @@
 }
 
 .horizontal {
-  overflow-x: scroll;
+  overflow-x: auto;
   overflow-y: hidden;
 
   &.autoScroll {
@@ -29,7 +29,7 @@
 }
 
 .both {
-  overflow: scroll;
+  overflow: auto;
 
   &.autoScroll {
     overflow: auto;
