@@ -36,7 +36,7 @@ namespace Radarr.Http.Extensions
 
         public static bool IsApiRequest(this HttpRequest request)
         {
-            return request.Path.StartsWithSegments("/api", StringComparison.InvariantCultureIgnoreCase);
+            return request.Path.StartsWithSegments("/api", StringComparison.OrdinalIgnoreCase);
         }
 
         public static bool GetBooleanQueryParameter(this HttpRequest request, string parameter, bool defaultValue = false)
