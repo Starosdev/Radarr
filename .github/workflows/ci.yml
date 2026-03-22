@@ -283,6 +283,83 @@ jobs:
           path: _archives/
 
   # ---------------------------------------------------------------------------
+  # Release: create GitHub Release with package assets
+  # ---------------------------------------------------------------------------
+  release:
+    runs-on: ubuntu-24.04
+    needs: [packages, installer, setup]
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/master')
+    permissions:
+      contents: write
+    env:
+      RADARR_VERSION: ${{ needs.setup.outputs.radarr_version }}
+      BRANCH_NAME: ${{ needs.setup.outputs.branch_name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download packages
+        uses: actions/download-artifact@v4
+        with:
+          name: packages
+          path: _release/
+
+      - name: Download installer
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-installer
+          path: _release/
+
+      - name: Generate checksums
+        working-directory: _release
+        run: |
+          sha256sum * > sha256sums.txt
+          cat sha256sums.txt
+
+      - name: Determine release type
+        id: release-type
+        run: |
+          if [ "${{ github.ref }}" = "refs/heads/master" ]; then
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+            echo "tag=v${RADARR_VERSION}" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "tag=v${RADARR_VERSION}-nightly" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create git tag
+        env:
+          TAG: ${{ steps.release-type.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${TAG}" -m "Release ${TAG}"
+          git push origin "${TAG}"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release-type.outputs.tag }}
+          PRERELEASE: ${{ steps.release-type.outputs.prerelease }}
+        run: |
+          RELEASE_ARGS=(
+            "${TAG}"
+            --repo Starosdev/Radarr
+            --title "Radarr v${RADARR_VERSION}"
+            --generate-notes
+          )
+
+          if [ "${PRERELEASE}" = "true" ]; then
+            RELEASE_ARGS+=(--prerelease)
+          else
+            RELEASE_ARGS+=(--latest)
+          fi
+
+          gh release create "${RELEASE_ARGS[@]}" _release/*
+
+  # ---------------------------------------------------------------------------
   # Lint
   # ---------------------------------------------------------------------------
   lint:
