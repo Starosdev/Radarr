@@ -28,7 +28,6 @@ env:
   MAJOR_VERSION: '6.1.1'
   DOTNET_VERSION: '8.0.405'
   NODE_VERSION: '20.19.0'
-  INNO_VERSION: '6.4.2'
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -881,7 +880,6 @@ jobs:
     env:
       RADARRVERSION: ${{ needs.setup.outputs.radarr_version }}
       MAJORVERSION: '6.1.1'
-      INNOVERSION: '6.4.2'
       BUILD_SOURCEBRANCHNAME: ${{ needs.setup.outputs.branch_name }}
       BUILDNAME: ${{ needs.setup.outputs.branch_name }}.${{ needs.setup.outputs.radarr_version }}
     steps:
@@ -1134,6 +1132,8 @@ jobs:
       - integration-docker
       - integration-postgres
       - installer
+      - release
+      - docker-manifest
       - sentry
       - sonarqube-frontend
       - sonarqube-backend
@@ -1159,6 +1159,18 @@ jobs:
 
           RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
+          RELEASE_URL="${{ github.server_url }}/${{ github.repository }}/releases/tag/v${RADARR_VERSION}${{ github.ref == 'refs/heads/develop' && '-nightly' || '' }}"
+
+          RELEASE_FIELD=""
+          if [ "${{ needs.release.result }}" = "success" ]; then
+            RELEASE_FIELD=",{\"name\": \"Release\", \"value\": \"[v${RADARR_VERSION}](${RELEASE_URL})\", \"inline\": true}"
+          fi
+
+          DOCKER_FIELD=""
+          if [ "${{ needs.docker-manifest.result }}" = "success" ]; then
+            DOCKER_FIELD=",{\"name\": \"Docker\", \"value\": \"ghcr.io/starosdev/radarr:${RADARR_VERSION}\", \"inline\": true}"
+          fi
+
           # Only send if webhook is configured
           if [ -n "$DISCORD_WEBHOOK_KEY" ] && [ -n "$DISCORD_WEBHOOK_ID" ]; then
             curl -s -H "Content-Type: application/json" \
@@ -1171,7 +1183,7 @@ jobs:
                   \"color\": ${COLOR},
                   \"fields\": [
                     {\"name\": \"Branch\", \"value\": \"${BRANCH_NAME}\", \"inline\": true},
-                    {\"name\": \"Version\", \"value\": \"${RADARR_VERSION}\", \"inline\": true}
+                    {\"name\": \"Version\", \"value\": \"${RADARR_VERSION}\", \"inline\": true}${RELEASE_FIELD}${DOCKER_FIELD}
                   ]
                 }]
               }" \
