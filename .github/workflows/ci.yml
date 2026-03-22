@@ -360,6 +360,116 @@ jobs:
           gh release create "${RELEASE_ARGS[@]}" _release/*
 
   # ---------------------------------------------------------------------------
+  # Docker: build and push per-arch images to GHCR
+  # ---------------------------------------------------------------------------
+  docker:
+    runs-on: ubuntu-24.04
+    needs: [packages, setup]
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/master')
+    permissions:
+      contents: read
+      packages: write
+    env:
+      RADARR_VERSION: ${{ needs.setup.outputs.radarr_version }}
+      BUILDNAME: ${{ needs.setup.outputs.branch_name }}.${{ needs.setup.outputs.radarr_version }}
+      REGISTRY: ghcr.io
+      IMAGE_NAME: starosdev/radarr
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            archive_rid: linux-core-x64
+          - platform: linux/arm64
+            archive_rid: linux-core-arm64
+          - platform: linux/arm/v7
+            archive_rid: linux-core-arm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Download packages
+        uses: actions/download-artifact@v4
+        with:
+          name: packages
+          path: _archives/
+
+      - name: Extract package for platform
+        run: |
+          mkdir -p radarr
+          tar xzf _archives/Radarr.${BUILDNAME}.${{ matrix.archive_rid }}.tar.gz -C radarr/
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: ${{ matrix.platform }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: ${{ matrix.platform }}
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.RADARR_VERSION }}-${{ matrix.archive_rid }}
+          labels: |
+            org.opencontainers.image.title=Radarr
+            org.opencontainers.image.version=${{ env.RADARR_VERSION }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          cache-from: type=gha,scope=${{ matrix.archive_rid }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.archive_rid }}
+
+  # ---------------------------------------------------------------------------
+  # Docker Manifest: combine per-arch images into multi-arch manifest
+  # ---------------------------------------------------------------------------
+  docker-manifest:
+    runs-on: ubuntu-24.04
+    needs: [docker, setup]
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/master')
+    permissions:
+      packages: write
+    env:
+      RADARR_VERSION: ${{ needs.setup.outputs.radarr_version }}
+      REGISTRY: ghcr.io
+      IMAGE_NAME: starosdev/radarr
+    steps:
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create and push manifests
+        run: |
+          VERSION_TAG="${REGISTRY}/${IMAGE_NAME}:${RADARR_VERSION}"
+          BRANCH_TAG="${REGISTRY}/${IMAGE_NAME}:${{ github.ref == 'refs/heads/master' && 'latest' || 'develop' }}"
+
+          docker manifest create "${VERSION_TAG}" \
+            "${REGISTRY}/${IMAGE_NAME}:${RADARR_VERSION}-linux-core-x64" \
+            "${REGISTRY}/${IMAGE_NAME}:${RADARR_VERSION}-linux-core-arm64" \
+            "${REGISTRY}/${IMAGE_NAME}:${RADARR_VERSION}-linux-core-arm"
+          docker manifest push "${VERSION_TAG}"
+
+          docker manifest create "${BRANCH_TAG}" \
+            "${REGISTRY}/${IMAGE_NAME}:${RADARR_VERSION}-linux-core-x64" \
+            "${REGISTRY}/${IMAGE_NAME}:${RADARR_VERSION}-linux-core-arm64" \
+            "${REGISTRY}/${IMAGE_NAME}:${RADARR_VERSION}-linux-core-arm"
+          docker manifest push "${BRANCH_TAG}"
+
+  # ---------------------------------------------------------------------------
   # Lint
   # ---------------------------------------------------------------------------
   lint:
