@@ -454,12 +454,12 @@ jobs:
           VERSION_TAG="${REGISTRY}/${IMAGE_NAME}:${RADARR_VERSION}"
           BRANCH_TAG="${REGISTRY}/${IMAGE_NAME}:${{ github.ref == 'refs/heads/master' && 'latest' || 'develop' }}"
 
-          docker manifest create "${VERSION_TAG}" \
+          docker manifest create --amend "${VERSION_TAG}" \
             "${REGISTRY}/${IMAGE_NAME}:${RADARR_VERSION}-linux-core-x64" \
             "${REGISTRY}/${IMAGE_NAME}:${RADARR_VERSION}-linux-core-arm64"
           docker manifest push "${VERSION_TAG}"
 
-          docker manifest create "${BRANCH_TAG}" \
+          docker manifest create --amend "${BRANCH_TAG}" \
             "${REGISTRY}/${IMAGE_NAME}:${RADARR_VERSION}-linux-core-x64" \
             "${REGISTRY}/${IMAGE_NAME}:${RADARR_VERSION}-linux-core-arm64"
           docker manifest push "${BRANCH_TAG}"
